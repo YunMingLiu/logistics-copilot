@@ -3,14 +3,22 @@
 Enterprise Multi-Agent Assistant for Meituan Youxuan Logistics.
 
 ## Features
-- ✅ **Intent Recognition**: 15+ logistics intents with confidence scoring
-- ✅ **Safety First**: Sensitive word blocking, low-confidence fallback
-- ✅ **Three Response Modes**:
-  - **Query**: Return factual answers (read-only)
-  - **Action**: Provide Deep Link for user confirmation
-  - **Incident**: Create structured ticket for human review
-- ✅ **Zero Long-term Memory**: No user history stored
-- ✅ **Audit Trail**: All incidents logged
+✅ 意图识别  
+ • 支持15+物流相关意图（如补货申请、破损赔付、路线变更等）  
+ • 每次识别输出置信度评分（0.0–1.0），用于路由决策  
+
+✅ 安全优先  
+ • 实时敏感词检测（如“赔偿”“起诉”“隐私泄露”），触发即拦截并转人工  
+ • 当置信度 < 0.85 或意图为“其他”时，自动进入低置信度兜底流程  
+
+✅ 三种响应模式  
+ • **查询类**：仅返回预审批知识库答案或只读API数据（如订单状态、政策条款），禁止LLM自由生成  
+ • **操作类**：生成带深层链接（deep link）的引导语（如“点击上传照片”），用户需在App前端确认后才触发后端执行  
+ • **事件类**：聚合订单、GPS、聊天记录等上下文，生成结构化工单，提交至高优人工队列，并告知用户“专员10分钟内联系”  
+
+✅ 隐私与合规  
+ • **无长期记忆**：对话结束后不存储任何用户身份或历史交互数据  
+ • **完整审计追踪**：所有被拦截、转人工、工单创建等事件均记录时间戳、上下文快照与处理路径，支持事后回溯
 
 ## Architecture
 
