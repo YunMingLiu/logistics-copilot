@@ -3,3 +3,5 @@ langgraph==0.1.18
 langchain-openai==0.1.22
 python-dotenv==1.0.1
 pydantic==2.8.2
+pytest==7.4.4
+pytest-mock==3.12.0  
