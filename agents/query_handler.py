@@ -11,30 +11,31 @@ from services.rag_retriever import RAGPolicyRetriever
 from utils.safety_guard import contains_sensitive_content, mask_pii
 from utils.metrics import FALLBACK_TO_HUMAN
 from config.settings import settings
+from agents import policy_handler, api_handler, action_handler
 
 classifier = IntentClassifier()
 retriever = RAGPolicyRetriever()
 
 def handle_query(user_question: str, user_context: dict) -> dict:
-    # Step 1: 脱敏
+    # 1. 脱敏
     clean_question = mask_pii(user_question)
     
-    # Step 2: 意图识别
+    # 2. 意图识别
     intent_result = classifier.predict(clean_question)
     intent = intent_result["intent"]
     confidence = intent_result["confidence"]
     
-    # Step 3: 低置信度兜底
     if confidence < 0.85:
         FALLBACK_TO_HUMAN.inc()
         return {"answer": "未理解您的问题，请联系人工客服。", "action": "fallback_to_human"}
-    
-    # Step 4: 分发
+
+    # 3. 分发到不同处理器
     if intent == "policy_query":
-        from .policy_handler import handle_policy_query
-        return handle_policy_query(clean_question, user_context)
-    elif intent == "order_status":
-        return {"answer": "正在查询订单状态...", "action": "call_order_api"}
+        return policy_handler.handle(clean_question, user_context)
+    elif intent in ["order_status", "delivery_estimate", "account_balance"]:
+        return api_handler.handle(intent, user_context)
+    elif intent == "operation_guide":
+        return action_handler.handle(clean_question)
     else:
         FALLBACK_TO_HUMAN.inc()
         return {"answer": "该问题暂不支持，请联系人工客服。", "action": "fallback_to_human"}
