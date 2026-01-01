@@ -1,0 +1,5 @@
+{"text": "我的订单到哪了？", "intent": "order_status"}
+{"text": "生鲜商品能退货吗？", "intent": "policy_query"}
+{"text": "怎么申请开发票？", "intent": "operation_guide"}
+{"text": "我账户里还有多少钱？", "intent": "account_balance"}
+{"text": "骑手大概多久能到？", "intent": "delivery_estimate"}
