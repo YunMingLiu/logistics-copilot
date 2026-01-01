@@ -22,7 +22,7 @@ Enterprise Multi-Agent Assistant for Logistics.
 
 ## Architecture
 
-本项目采用LangGraph + LangChain，为物流运营打造了一个企业级、安全至上的多智能体系统。与黑盒式自主智能体不同，我们的设计遵循集中编排+专业化处理程序的模式，以确保可审计性、合规性和人机协同控制——这对B2B场景至关重要。
+本项目为物流运营打造了一个企业级、安全至上的多智能体系统。与黑盒式自主智能体不同，我们的设计遵循集中编排+专业化处理程序的模式，以确保可审计性、合规性和人机协同控制——这对B2B场景至关重要。
 
 🔁 System Workflow
 ```mermaid
