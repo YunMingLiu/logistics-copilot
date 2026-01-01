@@ -1,0 +1,2 @@
+{"id": "p001", "content": "生鲜商品非质量问题不支持退货，破损请立即上报。", "doc_type": "policy", "region": "north", "min_app_version": "2.3.0", "deep_link": "meituan://policy?id=p001"}
+{"id": "p002", "content": "订单超时未取，系统将自动取消并计入考核。", "doc_type": "policy", "region": "south", "min_app_version": "2.1.0", "deep_link": "meituan://policy?id=p002"}

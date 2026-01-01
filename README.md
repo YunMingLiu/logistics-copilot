@@ -87,4 +87,10 @@ graph TD
     class H3,H4,H5,H6 frontend
 
 
-
+graph LR
+    A[Java Spring Boot App] -->|gRPC| B[Python Smart Agent]
+    B --> C[FAISS Policy Index]
+    B --> D[SFT Intent Model]
+    B --> E[Prometheus Metrics]
+    C --> F[data/policy_docs.jsonl]
+    D --> G[models/sft/intent_model]
