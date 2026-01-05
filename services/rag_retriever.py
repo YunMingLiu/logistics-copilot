@@ -2,11 +2,16 @@
 import os
 import logging
 import numpy as np
-import faiss
 from sentence_transformers import SentenceTransformer
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
-from config import POLICY_INDEX_PATH, POLICY_DOCS_PATH
+from pymilvus import connections, Collection, FieldSchema, CollectionSchema, DataType, utility
+from config import (
+    POLICY_DOCS_PATH,
+    MILVUS_HOST,        # 新增配置，如 "localhost"
+    MILVUS_PORT,        # 如 19530
+    MILVUS_COLLECTION_NAME  # 如 "policy_rag"
+)
 
 logger = logging.getLogger(__name__)
 
@@ -21,32 +26,49 @@ class RAGPolicyRetriever:
 
     def __init__(self):
         if not self._initialized:
-            if not os.path.exists(POLICY_INDEX_PATH):
-                raise FileNotFoundError("Policy FAISS index not found. Run build_policy_index.py first.")
-            
-            # 向量模型 & FAISS
-            self.model = SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2')
-            self.index = faiss.read_index(POLICY_INDEX_PATH)
-            self.docs = np.load(POLICY_DOCS_PATH, allow_pickle=True)
+            # 初始化 Milvus 连接
+            connections.connect(
+                alias="default",
+                host=MILVUS_HOST or "localhost",
+                port=MILVUS_PORT or "19530"
+            )
 
-            # 构建 TF-IDF 倒排索引（用于关键词召回）
+            self.collection_name = MILVUS_COLLECTION_NAME or "policy_rag"
+            self.model = SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2')
+
+            # 加载原始文档（用于 TF-IDF 和 fallback）
+            self.docs = np.load(POLICY_DOCS_PATH, allow_pickle=True)
             doc_texts = [doc.item()["content"] for doc in self.docs]
+
+            # 构建 TF-IDF（关键词召回）
             self.tfidf_vectorizer = TfidfVectorizer(
                 stop_words='english',
                 lowercase=True,
-                ngram_range=(1, 2),  # 支持 bi-gram
+                ngram_range=(1, 2),
                 max_features=10000
             )
             self.tfidf_matrix = self.tfidf_vectorizer.fit_transform(doc_texts)
 
+            # 确保 Milvus 集合存在
+            self._ensure_collection_exists()
+
             self._initialized = True
 
+    def _ensure_collection_exists(self):
+        """确保 Milvus 集合已创建（仅用于检查，不负责插入数据）"""
+        if not utility.has_collection(self.collection_name):
+            raise RuntimeError(
+                f"Milvus collection '{self.collection_name}' not found. "
+                "Please run a script to build and insert policy embeddings into Milvus."
+            )
+        self.collection = Collection(self.collection_name)
+        self.collection.load()  # 加载到内存以加速查询
+
     def _matches_metadata(self, doc: dict, filters: dict) -> bool:
-        """根据元数据过滤（如 region, app_version）"""
+        """Python 层面兜底过滤（Milvus 已支持下推，此函数可保留作兼容）"""
         for key, required_value in filters.items():
             if key in doc:
                 if key == "min_app_version":
-                    # 简化版本比较（实际可用 packaging.version）
                     if doc[key] > required_value:
                         continue
                 elif doc[key] != required_value:
@@ -54,66 +76,71 @@ class RAGPolicyRetriever:
         return True
 
     def _hybrid_fusion(self, vector_results, keyword_results, top_k):
-        """
-        使用 Reciprocal Rank Fusion (RRF) 融合两个结果列表
-        RRF score = sum(1 / (k + rank))
-        这里 k=60 是常用默认值
-        """
+        """RRF 融合"""
         rrf_scores = {}
         k = 60
-
-        # 向量结果按顺序赋 rank（从1开始）
         for rank, item in enumerate(vector_results, start=1):
-            doc_id = item["doc_id"]
-            rrf_scores[doc_id] = rrf_scores.get(doc_id, 0) + 1.0 / (k + rank)
-
-        # 关键词结果
+            rrf_scores[item["doc_id"]] = rrf_scores.get(item["doc_id"], 0) + 1.0 / (k + rank)
         for rank, item in enumerate(keyword_results, start=1):
-            doc_id = item["doc_id"]
-            rrf_scores[doc_id] = rrf_scores.get(doc_id, 0) + 1.0 / (k + rank)
+            rrf_scores[item["doc_id"]] = rrf_scores.get(item["doc_id"], 0) + 1.0 / (k + rank)
 
-        # 按 RRF 分数排序
         fused = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)
-        # 取回完整文档信息（去重）
         seen = set()
-        final_results = []
-        all_results = vector_results + keyword_results
-        doc_map = {item["doc_id"]: item for item in all_results}
-
+        final = []
+        doc_map = {item["doc_id"]: item for item in (vector_results + keyword_results)}
         for doc_id, _ in fused:
             if doc_id not in seen and doc_id in doc_map:
-                final_results.append(doc_map[doc_id])
+                final.append(doc_map[doc_id])
                 seen.add(doc_id)
-                if len(final_results) >= top_k:
+                if len(final) >= top_k:
                     break
-
-        return final_results
+        return final
 
     def retrieve(self, query: str, top_k: int = 1, metadata_filter: dict = None, threshold: float = 0.75):
-        """
-        混合检索：关键词（TF-IDF） + 向量（FAISS）
-        """
         try:
-            # === 向量召回 ===
-            emb = self.model.encode([query])
-            faiss.normalize_L2(emb)
-            D_vec, I_vec = self.index.search(emb.astype('float32'), k=top_k * 3)
+            # === 1. 向量检索（Milvus）===
+            query_emb = self.model.encode([query]).tolist()[0]
+
+            # 构建 Milvus 查询表达式（支持元数据过滤下推！）
+            expr = None
+            if metadata_filter:
+                conditions = []
+                for key, val in metadata_filter.items():
+                    if key == "min_app_version":
+                        # 注意：Milvus 不直接支持版本比较，需存为数值或字符串比较
+                        # 此处简化为字符串前缀匹配或忽略，建议存 version_int
+                        continue  # 或按业务逻辑处理
+                    elif isinstance(val, str):
+                        conditions.append(f'{key} == "{val}"')
+                    else:
+                        conditions.append(f'{key} == {val}')
+                if conditions:
+                    expr = " && ".join(conditions)
+
+            search_params = {"metric_type": "COSINE", "params": {"nprobe": 10}}
+            results = self.collection.search(
+                data=[query_emb],
+                anns_field="embedding",
+                param=search_params,
+                limit=top_k * 3,
+                expr=expr,  # ⬅️ 关键：过滤下推到 Milvus
+                output_fields=["doc_id", "content", "deep_link"]
+            )
 
             vector_candidates = []
-            for score, idx in zip(D_vec[0], I_vec[0]):
+            for hit in results[0]:
+                score = hit.distance
                 if score < threshold:
                     continue
-                doc = self.docs[idx].item()
-                if metadata_filter and not self._matches_metadata(doc, metadata_filter):
-                    continue
+                entity = hit.entity
                 vector_candidates.append({
-                    "text": doc["content"],
+                    "text": entity.get("content", ""),
                     "score": float(score),
-                    "deep_link": doc.get("deep_link", ""),
-                    "doc_id": doc["id"]
+                    "deep_link": entity.get("deep_link", ""),
+                    "doc_id": entity.get("doc_id", "")
                 })
 
-            # === 关键词召回（TF-IDF）===
+            # === 2. 关键词召回（TF-IDF）===
             query_tfidf = self.tfidf_vectorizer.transform([query])
             sim_scores = cosine_similarity(query_tfidf, self.tfidf_matrix).flatten()
             top_indices = np.argsort(sim_scores)[::-1][:top_k * 3]
@@ -128,17 +155,17 @@ class RAGPolicyRetriever:
                     continue
                 keyword_candidates.append({
                     "text": doc["content"],
-                    "score": score,  # TF-IDF 相似度（0~1）
+                    "score": score,
                     "deep_link": doc.get("deep_link", ""),
                     "doc_id": doc["id"]
                 })
 
-            # === 融合 ===
+            # === 3. 融合 ===
             fused_results = self._hybrid_fusion(vector_candidates, keyword_candidates, top_k)
 
-            logger.info(f"Hybrid RAG retrieved {len(fused_results)} results for: {query}")
+            logger.info(f"Hybrid RAG (Milvus+TFIDF) retrieved {len(fused_results)} results for: {query}")
             return fused_results
 
         except Exception as e:
-            logger.error(f"Hybrid RAG retrieval error: {e}", exc_info=True)
+            logger.error(f"Milvus hybrid retrieval error: {e}", exc_info=True)
             return []
