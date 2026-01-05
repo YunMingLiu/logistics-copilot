@@ -1,0 +1,16 @@
+replenishment_request
+damage_compensation
+route_change
+delivery_delay
+customs_clearance
+warehouse_inquiry
+return_goods
+order_tracking
+invoice_issue
+package_lost
+temperature_control
+special_handling
+address_correction
+cancellation_request
+payment_dispute
+other_logistics

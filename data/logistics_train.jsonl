@@ -1,0 +1,3 @@
+{"text": "仓库库存告急，请求紧急补货", "label": "replenishment_request"}
+{"text": "运输途中箱子破损，要求赔偿", "label": "damage_compensation"}
+{"text": "请把送货地址从北京改到上海", "label": "address_correction"}
